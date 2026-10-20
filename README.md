@@ -47,6 +47,7 @@ codex plugin add codex-goal-keeper@goal-keeper --json
 - `CODEX_HOME/goal-keeper/state.json`：全局开关与会话覆盖设置。
 - `runtime.json`：本机 Node、Codex 和安装路径。
 - `endpoint.json`：仅本机控制地址与随机令牌。
+- `control-key`：跨服务重启保留的本机令牌，让已打开面板自动重连。
 - `config-backup-*.toml`：安装前的配置备份，可能含私密配置，始终留在本机。
 
 会话标题仅用于本机控制面板显示。桌面状态在内存中提取为运行状态、目标状态和轮次标识；消息正文不保存、不发送到 GitHub。

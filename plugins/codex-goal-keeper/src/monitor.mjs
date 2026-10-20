@@ -87,7 +87,8 @@ export class Monitor extends EventEmitter {
       for (const id of this.goals.keys()) {
         if (!seen.has(id)) {
           this.goals.delete(id);
-          this.setRecord(id, { status: null, phase: this.records.get(id)?.phase === 'complete' ? 'complete' : 'no-goal' });
+          const complete = this.records.get(id)?.phase === 'complete';
+          this.setRecord(id, { status: complete ? 'complete' : null, phase: complete ? 'complete' : 'no-goal' });
           this.desktop.unwatch(id);
         }
       }
@@ -105,7 +106,7 @@ export class Monitor extends EventEmitter {
     const key = blockedKey(observed);
     let record = this.records.get(id) ?? {};
     if (record.retryAt > Date.now()) return;
-    if (record.sentKey === key) { this.setRecord(id, { status: 'blocked', phase: 'waiting' }); return; }
+    if (record.sentKey === key && record.sentAt > Date.now() - 1500) return;
     if (!this.settings.enabled(id)) return;
     const revision = this.settings.revision;
     const guard = () => !this.closed && revision === this.settings.revision && this.settings.enabled(id) && !this.completed.has(goalKey(observed));
@@ -138,12 +139,12 @@ export class Monitor extends EventEmitter {
     try {
       const result = await this.desktop.startTurn(id, messageId, guard);
       if (!result) { await this.restoreBlocked(id, updated.goal); return; }
-      this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, retryAt: 0, continuedAt: Date.now() });
+      this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, sentAt: Date.now(), retryAt: 0, continuedAt: Date.now() });
       this.emit('continued', id);
     } catch {
       const after = await this.desktop.snapshot(id).catch(() => null);
       if (after?.running && after.clientUserMessageId === messageId) {
-        this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, retryAt: 0, continuedAt: Date.now() });
+        this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, sentAt: Date.now(), retryAt: 0, continuedAt: Date.now() });
       } else if (after?.running) {
         this.setRecord(id, { status: 'active', phase: 'running', retryAt: 0 });
       } else {

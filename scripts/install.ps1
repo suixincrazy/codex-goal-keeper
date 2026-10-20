@@ -61,5 +61,7 @@ $keeperShortcut.Description = 'Start Codex Goal Keeper'
 $keeperShortcut.Save()
 
 Start-Process -FilePath $NodePath -ArgumentList @(('"{0}"' -f $keeperEntry), 'serve') -WindowStyle Hidden
-& $NodePath $keeperEntry status
+$keeperStatusText = & $NodePath $keeperEntry status
 if ($LASTEXITCODE -ne 0) { throw 'Plugin is installed but its local service did not start.' }
+$keeperStatus = ($keeperStatusText -join "`n") | ConvertFrom-Json
+[pscustomobject]@{ version=$keeperStatus.version; globalEnabled=$keeperStatus.globalEnabled; desktopConnected=$keeperStatus.desktopConnected; conversations=$keeperStatus.conversations.Count } | ConvertTo-Json

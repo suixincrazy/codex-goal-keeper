@@ -17,7 +17,14 @@ export async function startService({ home, dataDir, executable, port = 47831, op
   const rpc = await new AppServer(executable, home).start();
   const desktop = new Desktop(rpc);
   const monitor = new Monitor({ home, settings, desktop, rpc, pluginId: PLUGIN_ID });
-  const token = randomBytes(32).toString('hex');
+  const keyFile = join(dataDir, 'control-key');
+  let token;
+  try { token = readFileSync(keyFile, 'utf8').trim(); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  if (!/^[a-f0-9]{64}$/.test(token ?? '')) {
+    token = randomBytes(32).toString('hex');
+    writeFileSync(keyFile, token, { mode: 0o600 });
+  }
   const sockets = new Set();
   const panels = new Set();
   const conversations = new Map();
@@ -34,7 +41,7 @@ export async function startService({ home, dataDir, executable, port = 47831, op
 
   function view() {
     return {
-      version: '0.1.1', globalEnabled: settings.value.globalEnabled, desktopConnected: desktop.connected,
+      version: '0.1.2', globalEnabled: settings.value.globalEnabled, desktopConnected: desktop.connected,
       conversations: [...conversations.values()].map(thread => ({
         id: thread.id, title: thread.title, mode: settings.mode(thread.id), enabled: settings.enabled(thread.id),
         status: monitor.records.get(thread.id)?.status ?? monitor.goals.get(thread.id)?.status ?? null,
