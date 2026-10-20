@@ -187,7 +187,7 @@ export class Desktop extends EventEmitter {
       if (!guard() || snapshot.running || !snapshot.lastTurnId) return null;
       return callAppTool(id, snapshot.lastTurnId, 'send_message_to_thread', {
         threadId: id, hostId: 'local', prompt: '继续完成当前目标。检查已完成的工作与停滞原因，继续仍未完成且已获授权的工作，直到目标实际完成。',
-      });
+      }, guard);
     }
     if (!guard()) return null;
     return this.request('thread-follower-start-turn', {
@@ -216,16 +216,19 @@ export function appToolsPipe() {
   return `\\\\.\\pipe\\${paths[0]}`;
 }
 
-export function callAppTool(threadId, turnId, tool, args) {
+export function callAppTool(threadId, turnId, tool, args, guard = () => true) {
   return new Promise((resolve, reject) => {
     const socket = net.createConnection(appToolsPipe());
     const timer = setTimeout(() => { socket.destroy(); reject(Error('Codex panel request timed out')); }, 8000);
-    socket.once('connect', () => socket.write(frame({
+    socket.once('connect', () => {
+      if (!guard()) { clearTimeout(timer); socket.destroy(); resolve(null); return; }
+      socket.write(frame({
       jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
         arguments: args, callerSource: 'codex', callId: randomUUID(), namespace: 'codex_app',
         threadId, turnId, hostId: 'local', tool,
       },
-    })));
+      }));
+    });
     socket.once('error', error => { clearTimeout(timer); reject(error); });
     decode(socket, message => {
       clearTimeout(timer); socket.destroy();
