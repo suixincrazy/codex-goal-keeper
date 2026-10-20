@@ -96,7 +96,7 @@ export class Monitor extends EventEmitter {
       this.emit('unavailable');
     } finally {
       this.ticking = false;
-      this.timer = setTimeout(() => this.tick(), this.again ? 0 : 1500);
+      if (!this.closed) this.timer = setTimeout(() => this.tick(), this.again ? 0 : 1500);
       this.again = false;
     }
   }

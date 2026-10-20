@@ -41,7 +41,7 @@ export async function startService({ home, dataDir, executable, port = 47831, op
 
   function view() {
     return {
-      version: '0.1.5', globalEnabled: settings.value.globalEnabled, desktopConnected: desktop.connected,
+      version: '0.1.6', globalEnabled: settings.value.globalEnabled, desktopConnected: desktop.connected,
       conversations: [...conversations.values()].map(thread => ({
         id: thread.id, title: thread.title, mode: settings.mode(thread.id), enabled: settings.enabled(thread.id),
         status: monitor.records.get(thread.id)?.status ?? monitor.goals.get(thread.id)?.status ?? null,
@@ -150,7 +150,7 @@ export async function startService({ home, dataDir, executable, port = 47831, op
         }
       }
     } catch { /* The desktop may be closed while the service waits. */ }
-    finally { discovering = false; discoveryTimer = setTimeout(discover, 5000); }
+    finally { discovering = false; if (!closing) discoveryTimer = setTimeout(discover, 5000); }
   }
 
   function close() {

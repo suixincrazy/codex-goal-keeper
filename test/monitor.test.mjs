@@ -164,3 +164,11 @@ test('parallel goal checks share a single desktop connection attempt', async () 
   await desktop.connect();
   assert.equal(connections, 1);
 });
+
+test('stopping during a monitor tick does not schedule another check', async t => {
+  const f = fixture(t);
+  f.monitor.readGoals = () => { f.monitor.close(); return []; };
+  await f.monitor.tick();
+  assert.equal(f.monitor.timer, undefined);
+  assert.equal(f.monitor.closed, true);
+});
