@@ -109,6 +109,24 @@ test('conversation on continues even when global is off', async t => {
   assert.equal(f.turns.length, 1);
 });
 
+test('a later blocked transition starts a second continuation', async t => {
+  const f = fixture(t);
+  await f.monitor.evaluate(f.observed);
+  await f.rpc.request('thread/goal/set', { threadId: 'test-thread', status: 'blocked' });
+  await f.monitor.evaluate({ ...f.observed, updated_at_ms: 1004000 });
+  assert.equal(f.turns.length, 2);
+  assert.notEqual(f.turns[0].messageId, f.turns[1].messageId);
+});
+
+test('completion remains visible after the desktop clears the persisted goal', async t => {
+  const f = fixture(t);
+  f.desktop.emit('snapshot', { id: 'test-thread', goalStatus: 'complete' });
+  await f.monitor.tick();
+  assert.equal(f.monitor.records.get('test-thread').status, 'complete');
+  assert.equal(f.monitor.records.get('test-thread').phase, 'complete');
+  assert.equal(f.turns.length, 0);
+});
+
 test('completion cancels an in-flight pending check and drops its subscription', async t => {
   const f = fixture(t);
   let unwatch = 0;
