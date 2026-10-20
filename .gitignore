@@ -6,6 +6,7 @@ coverage/
 *.jsonl
 state.json
 endpoint.json
+control-key
 runtime.json
 private/
 .DS_Store

@@ -85,7 +85,14 @@ export class Desktop extends EventEmitter {
           const job = this.waiters.get(id);
           if (job) { clearTimeout(job.timer); this.waiters.delete(id); job.resolve(snapshot); }
           this.emit('snapshot', snapshot);
-        } else this.emit('changed', id);
+        } else {
+          const complete = message.params.change?.patches?.some(patch =>
+            (patch.path?.[0] === 'threadGoal' || patch.path?.[0] === 'completedThreadGoal') &&
+            ((patch.path.length === 1 && patch.value?.status === 'complete') ||
+              (patch.path[1] === 'status' && patch.value === 'complete')));
+          if (complete) this.emit('snapshot', { ...this.snapshots.get(id), id, goalStatus: 'complete' });
+          else this.emit('changed', id);
+        }
       } else if (message.method === 'ipc-connection-reset') this.socket.destroy();
     });
     this.socket.on('error', () => {});
