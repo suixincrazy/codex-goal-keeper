@@ -1,0 +1,22 @@
+{
+  "name": "codex-goal-keeper",
+  "version": "0.1.0",
+  "description": "Automatically continue blocked Codex goals with instant global and per-conversation switches.",
+  "author": { "name": "suixincrazy", "url": "https://github.com/suixincrazy" },
+  "repository": "https://github.com/suixincrazy/codex-goal-keeper",
+  "homepage": "https://github.com/suixincrazy/codex-goal-keeper",
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Goal Keeper",
+    "shortDescription": "自动续跑已停滞目标，支持全局与会话热开关。",
+    "longDescription": "在本机监测 Codex 目标，已停滞时自动继续，完成后停止该目标的监测。会话开关优先于全局开关，点击立即生效。",
+    "developerName": "suixincrazy",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": ["打开本会话的 Goal Keeper 开关面板"],
+    "logo": "./ui/icon.svg",
+    "composerIcon": "./ui/icon.svg"
+  }
+}

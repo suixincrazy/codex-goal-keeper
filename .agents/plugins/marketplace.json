@@ -1,0 +1,12 @@
+{
+  "name": "goal-keeper",
+  "interface": { "displayName": "Goal Keeper" },
+  "plugins": [
+    {
+      "name": "codex-goal-keeper",
+      "source": { "source": "local", "path": "./plugins/codex-goal-keeper" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

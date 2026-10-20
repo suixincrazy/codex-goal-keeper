@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Goal Keeper · 目标续跑</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/panel.css">
+  <script src="/panel.js" defer></script>
+</head>
+<body>
+  <main>
+    <div class="brand"><img src="/icon.svg" width="32" height="32" alt=""><div><h1>Goal Keeper</h1><span>目标自动续跑</span></div><span id="connection" class="connection">连接中</span></div>
+    <section>
+      <div class="section-title"><h2>全局开关</h2><button id="global" role="switch" aria-checked="false" aria-label="全局自动续跑开关" disabled><span class="switch-track"><span></span></span><span class="switch-label">读取中</span></button></div>
+      <p>作为所有会话的默认设置，点击立即生效。</p>
+    </section>
+    <section id="current" hidden>
+      <div class="section-title"><h2>本会话开关</h2><span id="effective" class="badge"></span></div>
+      <p id="thread-title" class="thread-title"></p>
+      <div class="modes" role="group" aria-label="本会话自动续跑设置">
+        <button data-mode="inherit" aria-pressed="false">继承全局</button>
+        <button data-mode="on" aria-pressed="false">开启</button>
+        <button data-mode="off" aria-pressed="false">关闭</button>
+      </div>
+      <p>本会话明确开启或关闭时，优先于全局设置。</p>
+      <div class="status-row"><span>目标状态</span><strong id="goal-status">读取中</strong></div>
+      <div class="status-row"><span>监测状态</span><strong id="phase">读取中</strong></div>
+    </section>
+    <section>
+      <div class="section-title"><h2>所有会话</h2><span class="muted">独立设置</span></div>
+      <div id="conversations"><p>读取中</p></div>
+    </section>
+    <div id="message" role="status" aria-live="polite"></div>
+    <p class="footnote">检测到“已停滞”时继续目标；目标实际完成后停止。开关设置仅保存在本机。</p>
+  </main>
+</body>
+</html>

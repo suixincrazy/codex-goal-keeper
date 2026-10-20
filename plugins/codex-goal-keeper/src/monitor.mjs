@@ -1,0 +1,165 @@
+import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+
+export function canContinue(goal, snapshot, enabled, pluginId) {
+  return enabled && goal?.status === 'blocked' && snapshot &&
+    !snapshot.running && snapshot.pendingRequests === 0 &&
+    snapshot.goalStatus !== 'complete' &&
+    !['paused', 'usageLimited', 'budgetLimited'].includes(snapshot.goalStatus) &&
+    !snapshot.disabledPluginIds?.includes(pluginId);
+}
+
+function goalKey(goal) { return goal.goal_id ?? `${goal.threadId}:${goal.createdAt}`; }
+function blockedKey(goal) { return `${goalKey(goal)}:${goal.updated_at_ms ?? goal.updatedAt}`; }
+
+export class Monitor extends EventEmitter {
+  constructor({ home, settings, desktop, rpc, pluginId, readGoals }) {
+    super();
+    Object.assign(this, { home, settings, desktop, rpc, pluginId });
+    this.readGoals = readGoals ?? (() => this.databaseGoals());
+    this.goals = new Map();
+    this.records = new Map();
+    this.inFlight = new Set();
+    this.completed = new Set();
+    this.settings.on('change', () => { this.emit('change'); this.kick(); });
+    this.desktop.on('snapshot', state => {
+      if (state.goalStatus === 'complete') {
+        const goal = this.goals.get(state.id);
+        if (goal) this.completed.add(goalKey(goal));
+        this.setRecord(state.id, { phase: 'complete', status: 'complete' });
+        this.desktop.unwatch(state.id);
+      }
+    });
+    this.desktop.on('changed', () => this.kick());
+  }
+
+  databaseGoals() {
+    const file = join(this.home, 'goals_1.sqlite');
+    if (!existsSync(file)) return [];
+    const db = new DatabaseSync(file, { readOnly: true });
+    try { return db.prepare('SELECT thread_id, goal_id, status, created_at_ms, updated_at_ms FROM thread_goals').all(); }
+    finally { db.close(); }
+  }
+
+  setRecord(id, patch) {
+    const record = { ...this.records.get(id), ...patch };
+    this.records.set(id, record);
+    this.emit('change');
+    return record;
+  }
+
+  kick() {
+    if (this.closed) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.tick(), 0);
+  }
+
+  async tick() {
+    if (this.closed) return;
+    if (this.ticking) { this.again = true; return; }
+    this.ticking = true;
+    try {
+      const rows = this.readGoals();
+      const seen = new Set();
+      for (const raw of rows) {
+        const goal = { ...raw, threadId: raw.thread_id ?? raw.threadId };
+        const id = goal.threadId;
+        seen.add(id);
+        this.goals.set(id, goal);
+        if (goal.status === 'complete' || this.completed.has(goalKey(goal))) {
+          this.completed.add(goalKey(goal));
+          this.setRecord(id, { status: 'complete', phase: 'complete' });
+          this.desktop.unwatch(id);
+        } else if (!this.settings.enabled(id)) {
+          this.setRecord(id, { status: goal.status, phase: 'disabled' });
+          this.desktop.unwatch(id);
+        } else if (goal.status === 'blocked') {
+          if (!this.inFlight.has(id)) {
+            this.inFlight.add(id);
+            this.evaluate(goal).catch(() => this.setRecord(id, { phase: 'retrying', retryAt: Date.now() + 5000 }))
+              .finally(() => this.inFlight.delete(id));
+          }
+        } else this.setRecord(id, { status: goal.status, phase: goal.status === 'active' ? 'watching' : 'waiting' });
+      }
+      for (const id of this.goals.keys()) {
+        if (!seen.has(id)) {
+          this.goals.delete(id);
+          this.setRecord(id, { status: null, phase: this.records.get(id)?.phase === 'complete' ? 'complete' : 'no-goal' });
+          this.desktop.unwatch(id);
+        }
+      }
+    } catch {
+      this.emit('unavailable');
+    } finally {
+      this.ticking = false;
+      this.timer = setTimeout(() => this.tick(), this.again ? 0 : 1500);
+      this.again = false;
+    }
+  }
+
+  async evaluate(observed) {
+    const id = observed.threadId;
+    const key = blockedKey(observed);
+    let record = this.records.get(id) ?? {};
+    if (record.retryAt > Date.now()) return;
+    if (record.sentKey === key) { this.setRecord(id, { status: 'blocked', phase: 'waiting' }); return; }
+    if (!this.settings.enabled(id)) return;
+    const revision = this.settings.revision;
+    const guard = () => !this.closed && revision === this.settings.revision && this.settings.enabled(id) && !this.completed.has(goalKey(observed));
+    this.setRecord(id, { status: 'blocked', phase: 'checking' });
+    await this.desktop.connect();
+    if (!guard()) return;
+    let snapshot;
+    try { snapshot = await this.desktop.snapshot(id); }
+    catch { this.setRecord(id, { status: 'blocked', phase: 'waiting-desktop', retryAt: Date.now() + 5000 }); return; }
+    if (!guard()) return;
+    if (!canContinue(observed, snapshot, true, this.pluginId)) {
+      this.setRecord(id, { status: 'blocked', phase: snapshot.running ? 'running' : 'waiting' });
+      return;
+    }
+    const { goal } = await this.rpc.request('thread/goal/get', { threadId: id });
+    if (!guard() || !goal || goal.status !== 'blocked' || (observed.created_at_ms != null && goal.createdAt !== Math.floor(observed.created_at_ms / 1000))) return;
+    // Keep the same message id across uncertain replies to prevent duplicate admission.
+    const messageId = record.pendingKey === key ? record.messageId : randomUUID();
+    record = this.setRecord(id, { pendingKey: key, messageId, phase: 'continuing' });
+    if (!guard()) return;
+    const updated = await this.rpc.request('thread/goal/set', { threadId: id, status: 'active', origin: 'automatic' });
+    if (!guard()) { await this.restoreBlocked(id, updated.goal); return; }
+    let latest;
+    try { latest = await this.desktop.snapshot(id); }
+    catch { await this.restoreBlocked(id, updated.goal); throw Error('Desktop became unavailable'); }
+    if (!guard() || latest.running || latest.pendingRequests > 0 || latest.goalStatus === 'complete') {
+      if (!latest.running) await this.restoreBlocked(id, updated.goal);
+      return;
+    }
+    try {
+      const result = await this.desktop.startTurn(id, messageId, guard);
+      if (!result) { await this.restoreBlocked(id, updated.goal); return; }
+      this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, retryAt: 0, continuedAt: Date.now() });
+      this.emit('continued', id);
+    } catch {
+      const after = await this.desktop.snapshot(id).catch(() => null);
+      if (after?.running && after.clientUserMessageId === messageId) {
+        this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, retryAt: 0, continuedAt: Date.now() });
+      } else if (after?.running) {
+        this.setRecord(id, { status: 'active', phase: 'running', retryAt: 0 });
+      } else {
+        await this.restoreBlocked(id, updated.goal);
+        this.setRecord(id, { status: 'blocked', phase: 'retrying', retryAt: Date.now() + 5000 });
+      }
+    }
+  }
+
+  async restoreBlocked(id, expected) {
+    if (!expected) return;
+    const { goal } = await this.rpc.request('thread/goal/get', { threadId: id });
+    if (goal?.status === 'active' && goal.createdAt === expected.createdAt && goal.updatedAt === expected.updatedAt) {
+      await this.rpc.request('thread/goal/set', { threadId: id, status: 'blocked', origin: 'automatic' });
+    }
+  }
+
+  close() { this.closed = true; clearTimeout(this.timer); }
+}

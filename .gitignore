@@ -1,0 +1,11 @@
+node_modules/
+coverage/
+.env*
+*.log
+*.sqlite*
+*.jsonl
+state.json
+endpoint.json
+runtime.json
+private/
+.DS_Store
