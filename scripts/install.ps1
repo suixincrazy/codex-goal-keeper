@@ -48,11 +48,8 @@ if (-not $keeperRoot -or -not (Test-Path -LiteralPath (Join-Path $keeperRoot 'sr
 $keeperEntry = Join-Path $keeperRoot 'src\cli.mjs'
 & $NodePath $keeperEntry runtime
 if ($LASTEXITCODE -ne 0) { throw 'Could not save local runtime settings.' }
-$keeperMcpPath = Join-Path $keeperRoot '.mcp.json'
-$keeperMcp = Get-Content -LiteralPath $keeperMcpPath -Raw | ConvertFrom-Json
-$keeperMcp.mcpServers.goal_keeper.command = $NodePath
-$keeperMcp.mcpServers.goal_keeper.args = @((Join-Path $keeperRoot 'src\mcp.mjs'))
-[System.IO.File]::WriteAllText($keeperMcpPath, ($keeperMcp | ConvertTo-Json -Depth 12), (New-Object System.Text.UTF8Encoding($false)))
+& $NodePath (Join-Path $PSScriptRoot '..\plugins\codex-goal-keeper\src\configure.mjs')
+if ($LASTEXITCODE -ne 0) { throw 'Could not configure the plugin MCP runtime.' }
 $keeperShell = New-Object -ComObject WScript.Shell
 $keeperStartup = [Environment]::GetFolderPath('Startup')
 $keeperShortcut = $keeperShell.CreateShortcut((Join-Path $keeperStartup 'Codex Goal Keeper.lnk'))

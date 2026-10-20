@@ -39,7 +39,7 @@ export class AppServer extends EventEmitter {
     this.child.on('error', error => this.fail(error));
     this.child.on('exit', () => { this.fail(Error('Codex app-server stopped')); this.emit('disconnect'); });
     await this.request('initialize', {
-      clientInfo: { name: 'codex-goal-keeper', version: '0.1.0' },
+      clientInfo: { name: 'codex-goal-keeper', version: '0.1.1' },
       capabilities: { experimentalApi: true },
     });
     this.child.stdin.write(`${JSON.stringify({ method: 'initialized' })}\n`);

@@ -6,6 +6,7 @@ if (Test-Path -LiteralPath $keeperRuntimeFile) {
     $keeperRuntime = Get-Content -LiteralPath $keeperRuntimeFile -Raw | ConvertFrom-Json
     & $keeperRuntime.node (Join-Path $keeperRuntime.root 'src\cli.mjs') stop
     Start-Sleep -Milliseconds 400
+    & $keeperRuntime.codex mcp remove goal_keeper
     & $keeperRuntime.codex plugin remove codex-goal-keeper@goal-keeper
 }
 $keeperShortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Goal Keeper.lnk'

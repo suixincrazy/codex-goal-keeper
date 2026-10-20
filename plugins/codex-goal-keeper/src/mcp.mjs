@@ -12,13 +12,13 @@ ready.catch(() => {});
 async function handle(message) {
   if (message.id === undefined) return;
   let result;
-  if (message.method === 'initialize') result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'codex-goal-keeper', version: '0.1.0' } };
+  if (message.method === 'initialize') result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'codex-goal-keeper', version: '0.1.1' } };
   else if (message.method === 'ping') result = {};
   else if (message.method === 'tools/list') result = { tools };
   else if (message.method === 'tools/call') {
     await ready;
     const args = message.params.arguments ?? {};
-    const id = args.threadId || process.env.CODEX_THREAD_ID || message.params._meta?.threadId;
+    const id = args.threadId || process.env.CODEX_THREAD_ID || message.params._meta?.threadId || message.params._meta?.thread_id;
     let output;
     if (message.params.name === 'goal_keeper_status') output = await request('/api/state');
     else if (message.params.name === 'goal_keeper_switch') output = await request('/api/settings', { ...args, ...(args.mode ? { threadId: id } : {}) });
