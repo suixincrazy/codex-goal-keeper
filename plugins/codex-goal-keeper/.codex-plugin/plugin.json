@@ -1,6 +1,6 @@
 {
   "name": "codex-goal-keeper",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Automatically continue blocked Codex goals with instant global and per-conversation switches.",
   "author": { "name": "suixincrazy", "url": "https://github.com/suixincrazy" },
   "repository": "https://github.com/suixincrazy/codex-goal-keeper",

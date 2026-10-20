@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Settings, effectiveEnabled } from '../plugins/codex-goal-keeper/src/settings.mjs';
 import { Monitor, canContinue } from '../plugins/codex-goal-keeper/src/monitor.mjs';
-import { compactSnapshot } from '../plugins/codex-goal-keeper/src/desktop.mjs';
+import { compactSnapshot, Desktop } from '../plugins/codex-goal-keeper/src/desktop.mjs';
 
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'goal-keeper-test-'));
@@ -147,4 +147,20 @@ test('paginated history detects active turns without storing message contents', 
   assert.equal(result.running, true);
   assert.equal(result.lastTurnId, 'turn-1');
   assert.equal(JSON.stringify(result).includes('private-message'), false);
+});
+
+test('parallel goal checks share a single desktop connection attempt', async () => {
+  const desktop = new Desktop();
+  let connections = 0, release;
+  desktop.openConnection = async () => {
+    connections++;
+    await new Promise(resolve => { release = resolve; });
+    desktop.connected = true;
+  };
+  const first = desktop.connect(), second = desktop.connect();
+  assert.equal(connections, 1);
+  release();
+  await Promise.all([first, second]);
+  await desktop.connect();
+  assert.equal(connections, 1);
 });

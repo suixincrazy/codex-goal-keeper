@@ -12,7 +12,7 @@ ready.catch(() => {});
 async function handle(message) {
   if (message.id === undefined) return;
   let result;
-  if (message.method === 'initialize') result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'codex-goal-keeper', version: '0.1.2' } };
+  if (message.method === 'initialize') result = { protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'codex-goal-keeper', version: '0.1.3' } };
   else if (message.method === 'ping') result = {};
   else if (message.method === 'tools/list') result = { tools };
   else if (message.method === 'tools/call') {

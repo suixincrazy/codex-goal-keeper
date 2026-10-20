@@ -61,6 +61,13 @@ export class Desktop extends EventEmitter {
 
   async connect() {
     if (this.connected) return;
+    if (this.connecting) return this.connecting;
+    this.connecting = this.openConnection();
+    try { await this.connecting; }
+    finally { this.connecting = null; }
+  }
+
+  async openConnection() {
     this.socket = net.createConnection(PIPE);
     decode(this.socket, message => {
       if (message.type === 'response') {
