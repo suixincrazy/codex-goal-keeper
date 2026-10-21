@@ -57,7 +57,7 @@ async function main() {
   if (command === 'serve') {
     try { await endpoint(); return; } catch {}
     const executable = findCodex();
-    const service = await startService({ home, dataDir, executable, openPanels: !args.includes('--no-panels') });
+    const service = await startService({ home, dataDir, executable });
     process.stdout.write(`${service.base}\n`);
   } else if (command === 'status') console.log(JSON.stringify(await request('/api/state'), null, 2));
   else if (command === 'on' || command === 'off') console.log(JSON.stringify(await request('/api/settings', { globalEnabled: command === 'on' })));

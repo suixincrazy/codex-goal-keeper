@@ -18,7 +18,7 @@ function fixture(t) {
   desktop.snapshot = async () => snapshot;
   desktop.unwatch = () => {};
   const turns = [];
-  desktop.startTurn = async (id, messageId, guard) => { if (guard()) { turns.push({ id, messageId }); return {}; } return null; };
+  desktop.resumeGoal = async (id, guard) => { if (guard()) { turns.push({ id }); goal = { ...goal, status: 'active', updatedAt: goal.updatedAt + 1 }; return { status: 'clicked' }; } return null; };
   let goal = { threadId: 'test-thread', createdAt: 1000, updatedAt: 1001, status: 'blocked' };
   const calls = [];
   const rpc = { async request(method, params) {
@@ -52,17 +52,18 @@ test('switch settings persist across service restarts', t => {
   assert.equal(restored.enabled('test-thread'), false);
 });
 
-test('blocked idle goal is activated and continued exactly once', async t => {
+test('blocked idle goal is resumed through its native control exactly once', async t => {
   const f = fixture(t);
   await f.monitor.evaluate(f.observed);
   assert.equal(f.turns.length, 1);
   assert.equal(f.getGoal().status, 'active');
+  assert.equal(f.calls.some(call => call.method === 'thread/goal/set'), false);
   await f.monitor.evaluate(f.observed);
   assert.equal(f.turns.length, 1);
 });
 
 test('only blocked goals are eligible; active, complete, limits and pauses wait', () => {
-  const snapshot = { running: false, pendingRequests: 0, disabledPluginIds: [] };
+  const snapshot = { goalStatus: 'blocked', running: false, pendingRequests: 0, disabledPluginIds: [] };
   for (const status of ['active', 'paused', 'complete', 'usageLimited', 'budgetLimited', null]) assert.equal(Boolean(canContinue({ status }, snapshot, true, 'test-plugin')), false);
   assert.equal(Boolean(canContinue({ status: 'blocked' }, snapshot, true, 'test-plugin')), true);
 });
@@ -89,22 +90,36 @@ test('a global disable during snapshot cancels a pending continuation', async t 
   assert.equal(f.calls.length, 0);
 });
 
-test('a conversation disable after activation restores blocked and sends no turn', async t => {
+test('a conversation disable after goal validation prevents a native click', async t => {
   const f = fixture(t);
   const original = f.rpc.request;
   f.rpc.request = async (method, params) => {
     const result = await original(method, params);
-    if (method === 'thread/goal/set' && params.status === 'active') f.settings.change({ threadId: 'test-thread', mode: 'off' });
+    if (method === 'thread/goal/get') f.settings.change({ threadId: 'test-thread', mode: 'off' });
     return result;
   };
   await f.monitor.evaluate(f.observed);
   assert.equal(f.turns.length, 0);
   assert.equal(f.getGoal().status, 'blocked');
+  assert.equal(f.calls.some(call => call.method === 'thread/goal/set'), false);
 });
 
 test('conversation on continues even when global is off', async t => {
   const f = fixture(t);
   f.settings.change({ globalEnabled: false, threadId: 'test-thread', mode: 'on' });
+  await f.monitor.evaluate(f.observed);
+  assert.equal(f.turns.length, 1);
+});
+
+test('re-enabling takes effect without waiting for an earlier control retry delay', async t => {
+  const f = fixture(t);
+  const resume = f.desktop.resumeGoal;
+  f.desktop.resumeGoal = async () => ({ status: 'unavailable' });
+  await f.monitor.evaluate(f.observed);
+  assert.ok(f.monitor.records.get('test-thread').retryAt > Date.now());
+  f.settings.change({ globalEnabled: false });
+  f.settings.change({ globalEnabled: true });
+  f.desktop.resumeGoal = resume;
   await f.monitor.evaluate(f.observed);
   assert.equal(f.turns.length, 1);
 });
@@ -115,7 +130,6 @@ test('a later blocked transition starts a second continuation', async t => {
   await f.rpc.request('thread/goal/set', { threadId: 'test-thread', status: 'blocked' });
   await f.monitor.evaluate({ ...f.observed, updated_at_ms: 1004000 });
   assert.equal(f.turns.length, 2);
-  assert.notEqual(f.turns[0].messageId, f.turns[1].messageId);
 });
 
 test('completion remains visible after the desktop clears the persisted goal', async t => {

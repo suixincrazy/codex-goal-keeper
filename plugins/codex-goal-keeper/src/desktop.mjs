@@ -1,7 +1,10 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import net from 'node:net';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { invokeGoalControl } from './goal-control.mjs';
 
 const PIPE = '\\\\.\\pipe\\codex-ipc';
 
@@ -34,6 +37,8 @@ export function compactSnapshot(state) {
   const latest = turns[0];
   return {
     id: state.id,
+    title: state.title,
+    goalObjective: state.threadGoal?.objective,
     goalStatus: state.threadGoal?.status ?? (state.completedThreadGoal ? 'complete' : null),
     goalCreatedAt: state.threadGoal?.createdAt ?? state.completedThreadGoal?.createdAt,
     runtime: state.threadRuntimeStatus?.type,
@@ -57,6 +62,9 @@ export class Desktop extends EventEmitter {
     this.owners = new Map();
     this.snapshots = new Map();
     this.clientId = 'initializing-client';
+    this.goalControlQueue = Promise.resolve();
+    this.invokeGoalControl = invokeGoalControl;
+    this.showConversation = (id, turnId, guard) => callAppTool(id, turnId, 'navigate_to_codex_page', { threadId: id }, guard);
   }
 
   async connect() {
@@ -155,16 +163,27 @@ export class Desktop extends EventEmitter {
   }
 
   async persistedSnapshot(id) {
-    const [{ thread }, turns] = await Promise.all([
+    const [{ thread }, turns, { goal }] = await Promise.all([
       this.rpc.request('thread/read', { threadId: id, includeTurns: false }),
       this.rpc.request('thread/turns/list', { threadId: id, limit: 1, sortDirection: 'desc' }),
+      this.rpc.request('thread/goal/get', { threadId: id }),
     ]);
     const latest = turns.data?.[0];
     return {
-      id, persisted: true, running: latest?.status === 'inProgress', pendingRequests: 0,
+      id, title: this.threadTitle(id) ?? thread.title, goalStatus: goal?.status, goalObjective: goal?.objective,
+      persisted: true, running: latest?.status === 'inProgress', pendingRequests: 0,
       lastTurnId: latest?.id, lastTurnStatus: latest?.status, model: thread.model, effort: thread.reasoningEffort,
       disabledPluginIds: thread.extra?.disabledPluginIds ?? [],
     };
+  }
+
+  threadTitle(id) {
+    if (!this.rpc?.home) return undefined;
+    const file = join(this.rpc.home, 'state_5.sqlite');
+    if (!existsSync(file)) return undefined;
+    const db = new DatabaseSync(file, { readOnly: true });
+    try { return db.prepare('SELECT title FROM threads WHERE id = ?').get(id)?.title; }
+    finally { db.close(); }
   }
 
   unwatch(id) {
@@ -178,29 +197,23 @@ export class Desktop extends EventEmitter {
     this.owners.delete(id);
   }
 
-  async startTurn(id, messageId, guard = () => true) {
-    let owner;
-    try { owner = this.owners.get(id) ?? await this.owner(id); }
-    catch (error) {
-      if (!this.rpc) throw error;
-      const snapshot = await this.persistedSnapshot(id);
-      if (!guard() || snapshot.running || !snapshot.lastTurnId) return null;
-      return callAppTool(id, snapshot.lastTurnId, 'send_message_to_thread', {
-        threadId: id, hostId: 'local', prompt: '继续完成当前目标。检查已完成的工作与停滞原因，继续仍未完成且已获授权的工作，直到目标实际完成。',
-      }, guard);
-    }
+  resumeGoal(id, guard = () => true, options = {}) {
+    const pending = this.goalControlQueue.then(() => this.resumeGoalControl(id, guard, options));
+    this.goalControlQueue = pending.catch(() => {});
+    return pending;
+  }
+
+  async resumeGoalControl(id, guard, { objective, settingsFile, pluginId }) {
     if (!guard()) return null;
-    return this.request('thread-follower-start-turn', {
-      conversationId: id,
-      turnStart: {
-        request: {
-          threadId: id,
-          input: [{ type: 'text', text: '继续完成当前目标。检查已经完成的工作与停滞原因，继续仍未完成且已获授权的工作，直到目标实际完成。', text_elements: [] }],
-          clientUserMessageId: messageId,
-        },
-        context: { inheritThreadSettings: true },
-      },
-    }, 2, owner, 15000);
+    const snapshot = await this.snapshot(id);
+    if (!guard() || snapshot.running || snapshot.pendingRequests > 0 || snapshot.goalStatus !== 'blocked' || !snapshot.lastTurnId) return null;
+    const shown = await this.showConversation(id, snapshot.lastTurnId, guard);
+    if (!shown || !guard()) return null;
+    const latest = await this.snapshot(id);
+    if (!guard() || latest.persisted || latest.running || latest.pendingRequests > 0 || latest.goalStatus !== 'blocked' ||
+        (pluginId != null && latest.disabledPluginIds?.includes(pluginId)) ||
+        (objective != null && latest.goalObjective != null && latest.goalObjective !== objective)) return null;
+    return this.invokeGoalControl({ title: this.threadTitle(id) ?? latest.title, objective: objective ?? latest.goalObjective, settingsFile }, guard);
   }
 
   close() {

@@ -1,5 +1,4 @@
 import { EventEmitter } from 'node:events';
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -7,8 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 export function canContinue(goal, snapshot, enabled, pluginId) {
   return enabled && goal?.status === 'blocked' && snapshot &&
     !snapshot.running && snapshot.pendingRequests === 0 &&
-    snapshot.goalStatus !== 'complete' &&
-    !['paused', 'usageLimited', 'budgetLimited'].includes(snapshot.goalStatus) &&
+    snapshot.goalStatus === 'blocked' &&
     !snapshot.disabledPluginIds?.includes(pluginId);
 }
 
@@ -24,7 +22,10 @@ export class Monitor extends EventEmitter {
     this.records = new Map();
     this.inFlight = new Set();
     this.completed = new Set();
-    this.settings.on('change', () => { this.emit('change'); this.kick(); });
+    this.settings.on('change', () => {
+      for (const record of this.records.values()) record.retryAt = 0;
+      this.emit('change'); this.kick();
+    });
     this.desktop.on('snapshot', state => {
       if (state.goalStatus === 'complete') {
         const goal = this.goals.get(state.id);
@@ -104,7 +105,7 @@ export class Monitor extends EventEmitter {
   async evaluate(observed) {
     const id = observed.threadId;
     const key = blockedKey(observed);
-    let record = this.records.get(id) ?? {};
+    const record = this.records.get(id) ?? {};
     if (record.retryAt > Date.now()) return;
     if (record.sentKey === key && record.sentAt > Date.now() - 1500) return;
     if (!this.settings.enabled(id)) return;
@@ -123,42 +124,25 @@ export class Monitor extends EventEmitter {
     }
     const { goal } = await this.rpc.request('thread/goal/get', { threadId: id });
     if (!guard() || !goal || goal.status !== 'blocked' || (observed.created_at_ms != null && goal.createdAt !== Math.floor(observed.created_at_ms / 1000))) return;
-    // Keep the same message id across uncertain replies to prevent duplicate admission.
-    const messageId = record.pendingKey === key ? record.messageId : randomUUID();
-    record = this.setRecord(id, { pendingKey: key, messageId, phase: 'continuing' });
+    this.setRecord(id, { phase: 'continuing' });
     if (!guard()) return;
-    const updated = await this.rpc.request('thread/goal/set', { threadId: id, status: 'active', origin: 'automatic' });
-    if (!guard()) { await this.restoreBlocked(id, updated.goal); return; }
-    let latest;
-    try { latest = await this.desktop.snapshot(id); }
-    catch { await this.restoreBlocked(id, updated.goal); throw Error('Desktop became unavailable'); }
-    if (!guard() || latest.running || latest.pendingRequests > 0 || latest.goalStatus === 'complete') {
-      if (!latest.running) await this.restoreBlocked(id, updated.goal);
-      return;
-    }
     try {
-      const result = await this.desktop.startTurn(id, messageId, guard);
-      if (!result) { await this.restoreBlocked(id, updated.goal); return; }
+      const result = await this.desktop.resumeGoal(id, guard, { objective: goal.objective, settingsFile: this.settings.file, pluginId: this.pluginId });
+      if (result?.status !== 'clicked') {
+        if (guard()) this.setRecord(id, { status: 'blocked', phase: 'waiting-desktop', retryAt: Date.now() + 5000 });
+        return;
+      }
+      if (!guard()) return;
       this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, sentAt: Date.now(), retryAt: 0, continuedAt: Date.now() });
       this.emit('continued', id);
     } catch {
       const after = await this.desktop.snapshot(id).catch(() => null);
-      if (after?.running && after.clientUserMessageId === messageId) {
+      if (!guard()) return;
+      if (after?.running || after?.goalStatus === 'active') {
         this.setRecord(id, { status: 'active', phase: 'running', sentKey: key, sentAt: Date.now(), retryAt: 0, continuedAt: Date.now() });
-      } else if (after?.running) {
-        this.setRecord(id, { status: 'active', phase: 'running', retryAt: 0 });
       } else {
-        await this.restoreBlocked(id, updated.goal);
         this.setRecord(id, { status: 'blocked', phase: 'retrying', retryAt: Date.now() + 5000 });
       }
-    }
-  }
-
-  async restoreBlocked(id, expected) {
-    if (!expected) return;
-    const { goal } = await this.rpc.request('thread/goal/get', { threadId: id });
-    if (goal?.status === 'active' && goal.createdAt === expected.createdAt && goal.updatedAt === expected.updatedAt) {
-      await this.rpc.request('thread/goal/set', { threadId: id, status: 'blocked', origin: 'automatic' });
     }
   }
 

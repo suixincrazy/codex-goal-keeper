@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,11 +11,15 @@ import { Monitor } from './monitor.mjs';
 
 export const PLUGIN_ID = 'codex-goal-keeper@goal-keeper';
 
-export async function startService({ home, dataDir, executable, port = 47831, openPanels = true }) {
+export function panelTabId(id) {
+  const digest = createHash('sha256').update(`${PLUGIN_ID}:${id}`).digest('hex');
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-5${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+export async function startService({ home, dataDir, executable, port = 47831, rpc = new AppServer(executable, home), desktop = new Desktop(rpc), openTab = callAppTool }) {
   mkdirSync(dataDir, { recursive: true });
   const settings = new Settings(join(dataDir, 'state.json'));
-  const rpc = await new AppServer(executable, home).start();
-  const desktop = new Desktop(rpc);
+  await rpc.start();
   const monitor = new Monitor({ home, settings, desktop, rpc, pluginId: PLUGIN_ID });
   const keyFile = join(dataDir, 'control-key');
   let token;
@@ -26,7 +30,7 @@ export async function startService({ home, dataDir, executable, port = 47831, op
     writeFileSync(keyFile, token, { mode: 0o600 });
   }
   const sockets = new Set();
-  const panels = new Set();
+  const panels = new Map();
   const conversations = new Map();
   const uiRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../ui');
   let base, closing = false, discovering = false, discoveryTimer;
@@ -41,7 +45,7 @@ export async function startService({ home, dataDir, executable, port = 47831, op
 
   function view() {
     return {
-      version: '0.1.6', globalEnabled: settings.value.globalEnabled, desktopConnected: desktop.connected,
+      version: '0.1.7', globalEnabled: settings.value.globalEnabled, desktopConnected: desktop.connected,
       conversations: [...conversations.values()].map(thread => ({
         id: thread.id, title: thread.title, mode: settings.mode(thread.id), enabled: settings.enabled(thread.id),
         status: monitor.records.get(thread.id)?.status ?? monitor.goals.get(thread.id)?.status ?? null,
@@ -59,14 +63,20 @@ export async function startService({ home, dataDir, executable, port = 47831, op
   monitor.on('change', publish);
   desktop.on('disconnect', publish);
 
-  async function panel(id) {
+  function panel(id) {
     if (!THREAD_ID.test(id)) throw Error('Invalid thread id');
+    if (panels.has(id)) return panels.get(id);
+    const pending = openPanel(id).finally(() => panels.delete(id));
+    panels.set(id, pending);
+    return pending;
+  }
+
+  async function openPanel(id) {
     await desktop.connect();
     const snapshot = await desktop.snapshot(id);
     if (!snapshot.lastTurnId) return { status: 'waiting-for-first-turn' };
     const url = `${base}/?thread=${encodeURIComponent(id)}#${token}`;
-    const result = await callAppTool(id, snapshot.lastTurnId, 'open_in_codex', { target: { type: 'browser', url }, threadId: id, placement: 'right' });
-    panels.add(id);
+    const result = await openTab(id, snapshot.lastTurnId, 'open_in_codex', { target: { type: 'browser', url, tabId: panelTabId(id) }, threadId: id, placement: 'right' });
     return { status: 'opened', url, result };
   }
 
@@ -138,17 +148,10 @@ export async function startService({ home, dataDir, executable, port = 47831, op
       try { rows = db.prepare("SELECT id,title FROM threads WHERE archived=0 AND source IN ('vscode','cli','exec') ORDER BY updated_at DESC").all(); }
       finally { db.close(); }
       const seen = new Set(rows.map(thread => thread.id));
-      for (const id of conversations.keys()) if (!seen.has(id)) { conversations.delete(id); panels.delete(id); desktop.unwatch(id); }
+      for (const id of conversations.keys()) if (!seen.has(id)) { conversations.delete(id); desktop.unwatch(id); }
       for (const thread of rows) conversations.set(thread.id, { id: thread.id, title: thread.title });
       publish();
       await desktop.connect();
-      if (openPanels) {
-        for (const thread of rows) {
-          if (closing) break;
-          if (panels.has(thread.id)) continue;
-          await panel(thread.id).catch(() => {});
-        }
-      }
     } catch { /* The desktop may be closed while the service waits. */ }
     finally { discovering = false; if (!closing) discoveryTimer = setTimeout(discover, 5000); }
   }
